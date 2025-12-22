@@ -52,6 +52,11 @@ class ServicioIn(BaseModel):
     descripcion: str | None = None
     duracion_minutos: int
 
+class PagoTurnoIn(BaseModel):
+    turno_id: int
+    metodo: str
+    monto: float
+
 class HorarioIn(BaseModel):
     servicio_id: int
     dia_semana: int  # 0-6 (lunes=0)
@@ -170,12 +175,18 @@ def listar_turnos():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT t.*, s.nombre AS servicio
+                SELECT
+                    t.*,
+                    s.nombre AS servicio,
+                    COALESCE(SUM(p.monto), 0) AS total_pagado
                 FROM turnos t
                 JOIN servicios s ON s.id = t.servicio_id
-                ORDER BY fecha, hora
+                LEFT JOIN pagos_turno p ON p.turno_id = t.id
+                GROUP BY t.id, s.nombre
+                ORDER BY t.fecha, t.hora
             """)
             return cur.fetchall()
+
 
 
 import os
@@ -291,6 +302,51 @@ def reservar_turno(data: TurnoReservaIn):
         pass
 
     return {"ok": True, "turno_id": turno_id}
+
+@app.post("/turnos/{turno_id}/confirmar")
+def confirmar_turno(turno_id: int):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE turnos SET confirmado = TRUE WHERE id = %s",
+                (turno_id,)
+            )
+
+            if cur.rowcount == 0:
+                raise HTTPException(404, "Turno no encontrado")
+
+            conn.commit()
+
+    return {"ok": True}
+
+@app.post("/pagos")
+def registrar_pago(data: PagoTurnoIn):
+    if data.metodo not in ("efectivo", "tarjeta", "transferencia"):
+        raise HTTPException(400, "Método inválido")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # verificar turno
+            cur.execute(
+                "SELECT id FROM turnos WHERE id = %s",
+                (data.turno_id,)
+            )
+            if not cur.fetchone():
+                raise HTTPException(404, "Turno no existe")
+
+            cur.execute("""
+                INSERT INTO pagos_turno (turno_id, metodo, monto)
+                VALUES (%s, %s, %s)
+            """, (
+                data.turno_id,
+                data.metodo,
+                data.monto
+            ))
+
+            conn.commit()
+
+    return {"ok": True}
+
 
 
 
