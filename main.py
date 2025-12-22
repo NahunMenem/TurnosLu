@@ -40,6 +40,12 @@ def get_conn():
 # =====================================================
 # MODELOS
 # =====================================================
+class TurnoReservaIn(BaseModel):
+    servicio_id: int
+    fecha: date
+    hora: time
+    cliente_nombre: str
+    cliente_telefono: str
 
 class ServicioIn(BaseModel):
     nombre: str
@@ -168,14 +174,22 @@ def reservar_turno(data: TurnoReservaIn):
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO turnos (servicio_id, fecha, hora, estado)
-                    VALUES (%s, %s, %s, 'reservado')
+                    INSERT INTO turnos
+                    (servicio_id, fecha, hora, estado, cliente_nombre, cliente_telefono)
+                    VALUES (%s, %s, %s, 'reservado', %s, %s)
                     RETURNING *
-                """, (data.servicio_id, data.fecha, data.hora))
+                """, (
+                    data.servicio_id,
+                    data.fecha,
+                    data.hora,
+                    data.cliente_nombre,
+                    data.cliente_telefono,
+                ))
                 conn.commit()
                 return cur.fetchone()
     except psycopg2.errors.UniqueViolation:
         raise HTTPException(400, "Turno ya reservado")
+class TurnoReservaIn(BaseModel):
 
 @app.get("/turnos")
 def listar_turnos():
