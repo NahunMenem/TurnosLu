@@ -254,4 +254,28 @@ def reservar_turno(data: TurnoReservaIn):
             detail="Error al reservar turno",
         )
 
+import os
+import requests
+
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
+
+def enviar_whatsapp(telefono: str, mensaje: str):
+    url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "text",
+        "text": {"body": mensaje},
+    }
+
+    r = requests.post(url, json=payload, headers=headers)
+    return r.status_code, r.text
+
 
