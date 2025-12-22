@@ -168,6 +168,8 @@ def disponibilidad(servicio_id: int, fecha: date):
 # TURNOS
 # =====================================================
 
+from fastapi import HTTPException
+
 @app.post("/turnos/reservar")
 def reservar_turno(data: TurnoReservaIn):
     try:
@@ -177,7 +179,7 @@ def reservar_turno(data: TurnoReservaIn):
                     INSERT INTO turnos
                     (servicio_id, fecha, hora, estado, cliente_nombre, cliente_telefono)
                     VALUES (%s, %s, %s, 'reservado', %s, %s)
-                    RETURNING *
+                    RETURNING id
                 """, (
                     data.servicio_id,
                     data.fecha,
@@ -185,11 +187,13 @@ def reservar_turno(data: TurnoReservaIn):
                     data.cliente_nombre,
                     data.cliente_telefono,
                 ))
+                turno_id = cur.fetchone()[0]
                 conn.commit()
-                return cur.fetchone()
-    except psycopg2.errors.UniqueViolation:
-        raise HTTPException(400, "Turno ya reservado")
-class TurnoReservaIn(BaseModel):
+                return {"ok": True, "turno_id": turno_id}
+    except Exception:
+        # Si ya tenés unique constraint (servicio_id, fecha, hora)
+        raise HTTPException(status_code=400, detail="Turno ya reservado")
+
 
 @app.get("/turnos")
 def listar_turnos():
@@ -202,3 +206,52 @@ def listar_turnos():
                 ORDER BY fecha, hora
             """)
             return cur.fetchall()
+
+
+from fastapi import HTTPException
+from whatsapp import enviar_whatsapp
+
+@app.post("/turnos/reservar")
+def reservar_turno(data: TurnoReservaIn):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO turnos
+                    (servicio_id, fecha, hora, estado, cliente_nombre, cliente_telefono)
+                    VALUES (%s, %s, %s, 'reservado', %s, %s)
+                    RETURNING id
+                """, (
+                    data.servicio_id,
+                    data.fecha,
+                    data.hora,
+                    data.cliente_nombre,
+                    data.cliente_telefono,
+                ))
+
+                turno_id = cur.fetchone()[0]
+                conn.commit()
+
+        # 📩 MENSAJE WHATSAPP
+        mensaje = (
+            f"✅ *Turno confirmado*\n\n"
+            f"👤 {data.cliente_nombre}\n"
+            f"📅 {data.fecha.strftime('%d/%m/%Y')}\n"
+            f"⏰ {data.hora.strftime('%H:%M')}\n\n"
+            f"Gracias por reservar."
+        )
+
+        enviar_whatsapp(
+            telefono=data.cliente_telefono,
+            mensaje=mensaje,
+        )
+
+        return {"ok": True, "turno_id": turno_id}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail="Error al reservar turno",
+        )
+
+
