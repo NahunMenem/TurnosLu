@@ -179,7 +179,6 @@ def listar_turnos():
 
 
 from fastapi import HTTPException
-from whatsapp import enviar_whatsapp
 
 import requests
 
