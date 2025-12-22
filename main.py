@@ -178,16 +178,50 @@ def listar_turnos():
             return cur.fetchall()
 
 
-from fastapi import HTTPException
-
+import os
 import requests
+from fastapi import HTTPException
 
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 
+
+# =====================================================
+# 📞 NORMALIZAR TELÉFONO ARGENTINA
+# =====================================================
+def normalizar_telefono_ar(telefono: str) -> str:
+    """
+    Convierte cualquier formato argentino a:
+    549XXXXXXXXXX
+    """
+    tel = telefono.strip()
+    tel = tel.replace(" ", "").replace("-", "").replace("+", "")
+
+    # ya correcto
+    if tel.startswith("549") and len(tel) >= 12:
+        return tel
+
+    # ej: 543811234567 → 5493811234567
+    if tel.startswith("54"):
+        return "549" + tel[2:]
+
+    # ej: 93811234567 → 5493811234567
+    if tel.startswith("9"):
+        return "54" + tel
+
+    # ej: 3811234567 → 5493811234567
+    return "549" + tel
+
+
+# =====================================================
+# 📩 ENVIAR WHATSAPP
+# =====================================================
 def enviar_whatsapp(telefono: str, mensaje: str):
     if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
+        print("❌ WhatsApp: token o phone_id faltante")
         return
+
+    telefono = normalizar_telefono_ar(telefono)
 
     url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
 
@@ -203,8 +237,17 @@ def enviar_whatsapp(telefono: str, mensaje: str):
         "text": {"body": mensaje},
     }
 
-    requests.post(url, json=payload, headers=headers, timeout=5)
+    try:
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        print("📩 WhatsApp status:", r.status_code)
+        print("📩 WhatsApp response:", r.text)
+    except Exception as e:
+        print("❌ WhatsApp exception:", str(e))
 
+
+# =====================================================
+# 📅 RESERVAR TURNO
+# =====================================================
 @app.post("/turnos/reservar")
 def reservar_turno(data: TurnoReservaIn):
     with get_conn() as conn:
@@ -232,7 +275,7 @@ def reservar_turno(data: TurnoReservaIn):
                     detail="Turno ya reservado",
                 )
 
-    # 📩 WhatsApp NO BLOQUEANTE
+    # 📩 MENSAJE
     mensaje = (
         f"✅ *Turno confirmado*\n\n"
         f"👤 {data.cliente_nombre}\n"
@@ -241,11 +284,13 @@ def reservar_turno(data: TurnoReservaIn):
         f"Gracias por reservar."
     )
 
+    # WhatsApp NO bloqueante
     try:
         enviar_whatsapp(data.cliente_telefono, mensaje)
     except Exception:
         pass
 
     return {"ok": True, "turno_id": turno_id}
+
 
 
