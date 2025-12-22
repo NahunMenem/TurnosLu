@@ -319,6 +319,46 @@ def reservar_turno(data: TurnoReservaIn):
 
     return {"ok": True, "turno_id": turno_id}
 
+@app.delete("/turnos/{turno_id}")
+def eliminar_turno(turno_id: int):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+
+            # 1️⃣ Verificar que el turno exista y NO esté confirmado
+            cur.execute("""
+                SELECT confirmado
+                FROM turnos
+                WHERE id = %s
+            """, (turno_id,))
+
+            turno = cur.fetchone()
+
+            if not turno:
+                raise HTTPException(404, "Turno no encontrado")
+
+            if turno["confirmado"] is True:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se puede eliminar un turno confirmado"
+                )
+
+            # 2️⃣ Eliminar pagos asociados (por seguridad)
+            cur.execute("""
+                DELETE FROM pagos_turno
+                WHERE turno_id = %s
+            """, (turno_id,))
+
+            # 3️⃣ Eliminar turno
+            cur.execute("""
+                DELETE FROM turnos
+                WHERE id = %s
+            """, (turno_id,))
+
+            conn.commit()
+
+    return {"ok": True}
+
+
 @app.post("/turnos/{turno_id}/confirmar")
 def confirmar_turno(turno_id: int):
     with get_conn() as conn:
