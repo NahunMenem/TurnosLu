@@ -1,0 +1,180 @@
+import os
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import date, time, datetime, timedelta
+
+# =====================================================
+# CONFIG
+# =====================================================
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL no definida")
+
+app = FastAPI(title="Sistema de Turnos")
+
+# =====================================================
+# DB CONNECTION
+# =====================================================
+
+def get_conn():
+    return psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        cursor_factory=RealDictCursor
+    )
+
+# =====================================================
+# MODELOS
+# =====================================================
+
+class ServicioIn(BaseModel):
+    nombre: str
+    descripcion: str | None = None
+    duracion_minutos: int
+
+class HorarioIn(BaseModel):
+    servicio_id: int
+    dia_semana: int  # 0-6 (lunes=0)
+    hora_inicio: time
+    hora_fin: time
+
+class TurnoReservaIn(BaseModel):
+    servicio_id: int
+    fecha: date
+    hora: time
+
+# =====================================================
+# SERVICIOS
+# =====================================================
+
+@app.get("/servicios")
+def listar_servicios():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM servicios WHERE activo = TRUE ORDER BY id")
+            return cur.fetchall()
+
+@app.post("/servicios")
+def crear_servicio(data: ServicioIn):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO servicios (nombre, descripcion, duracion_minutos)
+                VALUES (%s, %s, %s)
+                RETURNING *
+            """, (data.nombre, data.descripcion, data.duracion_minutos))
+            conn.commit()
+            return cur.fetchone()
+
+# =====================================================
+# HORARIOS
+# =====================================================
+
+@app.get("/servicios/{servicio_id}/horarios")
+def horarios_servicio(servicio_id: int):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM horarios_servicio
+                WHERE servicio_id = %s
+                ORDER BY dia_semana, hora_inicio
+            """, (servicio_id,))
+            return cur.fetchall()
+
+@app.post("/horarios")
+def crear_horario(data: HorarioIn):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO horarios_servicio
+                (servicio_id, dia_semana, hora_inicio, hora_fin)
+                VALUES (%s, %s, %s, %s)
+                RETURNING *
+            """, (
+                data.servicio_id,
+                data.dia_semana,
+                data.hora_inicio,
+                data.hora_fin
+            ))
+            conn.commit()
+            return cur.fetchone()
+
+# =====================================================
+# DISPONIBILIDAD
+# =====================================================
+
+@app.get("/disponibilidad")
+def disponibilidad(servicio_id: int, fecha: date):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute("SELECT * FROM servicios WHERE id = %s", (servicio_id,))
+            servicio = cur.fetchone()
+            if not servicio:
+                raise HTTPException(404, "Servicio no encontrado")
+
+            duracion = servicio["duracion_minutos"]
+            dia_semana = fecha.weekday()
+
+            cur.execute("""
+                SELECT * FROM horarios_servicio
+                WHERE servicio_id = %s AND dia_semana = %s
+            """, (servicio_id, dia_semana))
+            horarios = cur.fetchall()
+
+            cur.execute("""
+                SELECT hora FROM turnos
+                WHERE servicio_id = %s
+                AND fecha = %s
+                AND estado = 'reservado'
+            """, (servicio_id, fecha))
+
+            ocupados = {r["hora"] for r in cur.fetchall()}
+            disponibles = []
+
+            for h in horarios:
+                inicio = datetime.combine(fecha, h["hora_inicio"])
+                fin = datetime.combine(fecha, h["hora_fin"])
+
+                while inicio + timedelta(minutes=duracion) <= fin:
+                    hora_turno = inicio.time()
+                    if hora_turno not in ocupados:
+                        disponibles.append(hora_turno.strftime("%H:%M"))
+                    inicio += timedelta(minutes=duracion)
+
+            return disponibles
+
+# =====================================================
+# TURNOS
+# =====================================================
+
+@app.post("/turnos/reservar")
+def reservar_turno(data: TurnoReservaIn):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO turnos (servicio_id, fecha, hora, estado)
+                    VALUES (%s, %s, %s, 'reservado')
+                    RETURNING *
+                """, (data.servicio_id, data.fecha, data.hora))
+                conn.commit()
+                return cur.fetchone()
+    except psycopg2.errors.UniqueViolation:
+        raise HTTPException(400, "Turno ya reservado")
+
+@app.get("/turnos")
+def listar_turnos():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT t.*, s.nombre AS servicio
+                FROM turnos t
+                JOIN servicios s ON s.id = t.servicio_id
+                ORDER BY fecha, hora
+            """)
+            return cur.fetchall()
