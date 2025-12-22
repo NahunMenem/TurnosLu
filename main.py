@@ -348,5 +348,92 @@ def registrar_pago(data: PagoTurnoIn):
     return {"ok": True}
 
 
+from typing import Optional
+from fastapi import Query
+
+@app.get("/caja")
+def caja(
+    desde: date = Query(...),
+    hasta: date = Query(...),
+):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+
+            # =========================
+            # 💰 TOTAL GENERAL
+            # =========================
+            cur.execute("""
+                SELECT COALESCE(SUM(p.monto), 0) AS total
+                FROM pagos_turno p
+                JOIN turnos t ON t.id = p.turno_id
+                WHERE t.fecha BETWEEN %s AND %s
+            """, (desde, hasta))
+            total_general = cur.fetchone()["total"]
+
+            # =========================
+            # 💳 TOTAL POR MÉTODO
+            # =========================
+            cur.execute("""
+                SELECT
+                    p.metodo,
+                    SUM(p.monto) AS total
+                FROM pagos_turno p
+                JOIN turnos t ON t.id = p.turno_id
+                WHERE t.fecha BETWEEN %s AND %s
+                GROUP BY p.metodo
+            """, (desde, hasta))
+            total_por_metodo = cur.fetchall()
+
+            # =========================
+            # 💆 TOTAL POR SERVICIO
+            # =========================
+            cur.execute("""
+                SELECT
+                    s.nombre AS servicio,
+                    COALESCE(SUM(p.monto), 0) AS total
+                FROM turnos t
+                JOIN servicios s ON s.id = t.servicio_id
+                LEFT JOIN pagos_turno p ON p.turno_id = t.id
+                WHERE t.fecha BETWEEN %s AND %s
+                GROUP BY s.nombre
+                ORDER BY total DESC
+            """, (desde, hasta))
+            total_por_servicio = cur.fetchall()
+
+            # =========================
+            # 📊 SERVICIOS MÁS SOLICITADOS (%)
+            # =========================
+            cur.execute("""
+                SELECT
+                    s.nombre AS servicio,
+                    COUNT(*) AS cantidad
+                FROM turnos t
+                JOIN servicios s ON s.id = t.servicio_id
+                WHERE t.fecha BETWEEN %s AND %s
+                GROUP BY s.nombre
+                ORDER BY cantidad DESC
+            """, (desde, hasta))
+            servicios = cur.fetchall()
+
+            total_turnos = sum(s["cantidad"] for s in servicios) or 1
+
+            servicios_mas_solicitados = [
+                {
+                    "servicio": s["servicio"],
+                    "cantidad": s["cantidad"],
+                    "porcentaje": round(s["cantidad"] * 100 / total_turnos, 2)
+                }
+                for s in servicios
+            ]
+
+            return {
+                "desde": desde,
+                "hasta": hasta,
+                "total_general": total_general,
+                "total_por_metodo": total_por_metodo,
+                "total_por_servicio": total_por_servicio,
+                "servicios_mas_solicitados": servicios_mas_solicitados,
+                "total_turnos": total_turnos,
+            }
 
 
