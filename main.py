@@ -171,21 +171,37 @@ def disponibilidad(servicio_id: int, fecha: date):
 from fastapi import HTTPException
 
 @app.get("/turnos")
-def listar_turnos():
+def listar_turnos(fecha: date | None = None):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    t.*,
-                    s.nombre AS servicio,
-                    COALESCE(SUM(p.monto), 0) AS total_pagado
-                FROM turnos t
-                JOIN servicios s ON s.id = t.servicio_id
-                LEFT JOIN pagos_turno p ON p.turno_id = t.id
-                GROUP BY t.id, s.nombre
-                ORDER BY t.fecha, t.hora
-            """)
+            if fecha:
+                cur.execute("""
+                    SELECT
+                        t.*,
+                        s.nombre AS servicio,
+                        COALESCE(SUM(p.monto), 0) AS total_pagado
+                    FROM turnos t
+                    JOIN servicios s ON s.id = t.servicio_id
+                    LEFT JOIN pagos_turno p ON p.turno_id = t.id
+                    WHERE t.fecha = %s
+                    GROUP BY t.id, s.nombre
+                    ORDER BY t.hora
+                """, (fecha,))
+            else:
+                cur.execute("""
+                    SELECT
+                        t.*,
+                        s.nombre AS servicio,
+                        COALESCE(SUM(p.monto), 0) AS total_pagado
+                    FROM turnos t
+                    JOIN servicios s ON s.id = t.servicio_id
+                    LEFT JOIN pagos_turno p ON p.turno_id = t.id
+                    GROUP BY t.id, s.nombre
+                    ORDER BY t.fecha, t.hora
+                """)
+
             return cur.fetchall()
+
 
 
 
