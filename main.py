@@ -16,6 +16,16 @@ if not DATABASE_URL:
 
 app = FastAPI(title="Sistema de Turnos")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # desarrollo
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # =====================================================
 # DB CONNECTION
 # =====================================================
