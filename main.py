@@ -58,11 +58,6 @@ class HorarioIn(BaseModel):
     hora_inicio: time
     hora_fin: time
 
-class TurnoReservaIn(BaseModel):
-    servicio_id: int
-    fecha: date
-    hora: time
-
 # =====================================================
 # SERVICIOS
 # =====================================================
@@ -170,31 +165,6 @@ def disponibilidad(servicio_id: int, fecha: date):
 
 from fastapi import HTTPException
 
-@app.post("/turnos/reservar")
-def reservar_turno(data: TurnoReservaIn):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO turnos
-                    (servicio_id, fecha, hora, estado, cliente_nombre, cliente_telefono)
-                    VALUES (%s, %s, %s, 'reservado', %s, %s)
-                    RETURNING id
-                """, (
-                    data.servicio_id,
-                    data.fecha,
-                    data.hora,
-                    data.cliente_nombre,
-                    data.cliente_telefono,
-                ))
-                turno_id = cur.fetchone()[0]
-                conn.commit()
-                return {"ok": True, "turno_id": turno_id}
-    except Exception:
-        # Si ya tenés unique constraint (servicio_id, fecha, hora)
-        raise HTTPException(status_code=400, detail="Turno ya reservado")
-
-
 @app.get("/turnos")
 def listar_turnos():
     with get_conn() as conn:
@@ -211,56 +181,15 @@ def listar_turnos():
 from fastapi import HTTPException
 from whatsapp import enviar_whatsapp
 
-@app.post("/turnos/reservar")
-def reservar_turno(data: TurnoReservaIn):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO turnos
-                    (servicio_id, fecha, hora, estado, cliente_nombre, cliente_telefono)
-                    VALUES (%s, %s, %s, 'reservado', %s, %s)
-                    RETURNING id
-                """, (
-                    data.servicio_id,
-                    data.fecha,
-                    data.hora,
-                    data.cliente_nombre,
-                    data.cliente_telefono,
-                ))
-
-                turno_id = cur.fetchone()[0]
-                conn.commit()
-
-        # 📩 MENSAJE WHATSAPP
-        mensaje = (
-            f"✅ *Turno confirmado*\n\n"
-            f"👤 {data.cliente_nombre}\n"
-            f"📅 {data.fecha.strftime('%d/%m/%Y')}\n"
-            f"⏰ {data.hora.strftime('%H:%M')}\n\n"
-            f"Gracias por reservar."
-        )
-
-        enviar_whatsapp(
-            telefono=data.cliente_telefono,
-            mensaje=mensaje,
-        )
-
-        return {"ok": True, "turno_id": turno_id}
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail="Error al reservar turno",
-        )
-
-import os
 import requests
 
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
 
 def enviar_whatsapp(telefono: str, mensaje: str):
+    if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
+        return
+
     url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
 
     headers = {
@@ -275,7 +204,49 @@ def enviar_whatsapp(telefono: str, mensaje: str):
         "text": {"body": mensaje},
     }
 
-    r = requests.post(url, json=payload, headers=headers)
-    return r.status_code, r.text
+    requests.post(url, json=payload, headers=headers, timeout=5)
+
+@app.post("/turnos/reservar")
+def reservar_turno(data: TurnoReservaIn):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    INSERT INTO turnos
+                    (servicio_id, fecha, hora, estado, cliente_nombre, cliente_telefono)
+                    VALUES (%s, %s, %s, 'reservado', %s, %s)
+                    RETURNING id
+                """, (
+                    data.servicio_id,
+                    data.fecha,
+                    data.hora,
+                    data.cliente_nombre,
+                    data.cliente_telefono,
+                ))
+
+                turno_id = cur.fetchone()["id"]
+                conn.commit()
+
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Turno ya reservado",
+                )
+
+    # 📩 WhatsApp NO BLOQUEANTE
+    mensaje = (
+        f"✅ *Turno confirmado*\n\n"
+        f"👤 {data.cliente_nombre}\n"
+        f"📅 {data.fecha.strftime('%d/%m/%Y')}\n"
+        f"⏰ {data.hora.strftime('%H:%M')}\n\n"
+        f"Gracias por reservar."
+    )
+
+    try:
+        enviar_whatsapp(data.cliente_telefono, mensaje)
+    except Exception:
+        pass
+
+    return {"ok": True, "turno_id": turno_id}
 
 
