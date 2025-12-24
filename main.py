@@ -51,6 +51,7 @@ class ServicioIn(BaseModel):
     nombre: str
     descripcion: str | None = None
     duracion_minutos: int
+    precio: float
 
 class PagoTurnoIn(BaseModel):
     turno_id: int
@@ -63,6 +64,14 @@ class HorarioIn(BaseModel):
     hora_inicio: time
     hora_fin: time
 
+from pydantic import BaseModel
+from typing import Optional
+
+class ServicioUpdate(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+    duracion_minutos: int
+    precio: float
 # =====================================================
 # SERVICIOS
 # =====================================================
@@ -73,18 +82,56 @@ def listar_servicios():
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM servicios WHERE activo = TRUE ORDER BY id")
             return cur.fetchall()
-
+            
+#agregar servicio------------------------------------------------------------------------
 @app.post("/servicios")
 def crear_servicio(data: ServicioIn):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO servicios (nombre, descripcion, duracion_minutos)
-                VALUES (%s, %s, %s)
+                INSERT INTO servicios (nombre, descripcion, duracion_minutos, precio)
+                VALUES (%s, %s, %s, %s)
                 RETURNING *
-            """, (data.nombre, data.descripcion, data.duracion_minutos))
+            """, (
+                data.nombre,
+                data.descripcion,
+                data.duracion_minutos,
+                data.precio
+            ))
             conn.commit()
             return cur.fetchone()
+            
+ #EDITAR SERVICIO------------------------------------------------------------------------------           
+@app.put("/servicios/{servicio_id}")
+def editar_servicio(servicio_id: int, data: ServicioUpdate):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE servicios
+                SET nombre = %s,
+                    descripcion = %s,
+                    duracion_minutos = %s,
+                    precio = %s
+                WHERE id = %s
+                RETURNING *
+            """, (
+                data.nombre,
+                data.descripcion,
+                data.duracion_minutos,
+                data.precio,
+                servicio_id
+            ))
+
+            servicio = cur.fetchone()
+
+            if not servicio:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Servicio no encontrado"
+                )
+
+            conn.commit()
+            return servicio
 
 # =====================================================
 # HORARIOS
