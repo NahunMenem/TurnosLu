@@ -365,7 +365,8 @@ def reservar_turno(data: TurnoReservaIn):
         pass
 
     return {"ok": True, "turno_id": turno_id}
-
+    
+#BORRAR TURNO ----------------------------------------------------------------------------------------
 @app.delete("/turnos/{turno_id}")
 def eliminar_turno(turno_id: int):
     with get_conn() as conn:
