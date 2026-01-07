@@ -148,6 +148,27 @@ def horarios_servicio(servicio_id: int):
             """, (servicio_id,))
             return cur.fetchall()
 
+@app.delete("/horarios/{horario_id}")
+def eliminar_horario(horario_id: int):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM horarios_servicio
+                WHERE id = %s
+                RETURNING *
+            """, (horario_id,))
+            
+            eliminado = cur.fetchone()
+            conn.commit()
+
+            if not eliminado:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Horario no encontrado"
+                )
+
+            return eliminado
+
 @app.post("/horarios")
 def crear_horario(data: HorarioIn):
     with get_conn() as conn:
