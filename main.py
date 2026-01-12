@@ -562,3 +562,73 @@ def caja(
             }
 
 
+from calendar import monthrange
+from datetime import date, datetime, timedelta
+
+@app.get("/disponibilidad/mes")
+def disponibilidad_mes(servicio_id: int, month: str):
+    """
+    month = 'YYYY-MM'
+    """
+
+    year, month_num = map(int, month.split("-"))
+    _, last_day = monthrange(year, month_num)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+
+            # Traemos servicio
+            cur.execute("SELECT * FROM servicios WHERE id = %s", (servicio_id,))
+            servicio = cur.fetchone()
+            if not servicio:
+                raise HTTPException(404, "Servicio no encontrado")
+
+            duracion = servicio["duracion_minutos"]
+            resultado = []
+
+            for day in range(1, last_day + 1):
+                fecha = date(year, month_num, day)
+                dia_semana = fecha.weekday()
+
+                # Horarios del día
+                cur.execute("""
+                    SELECT * FROM horarios_servicio
+                    WHERE servicio_id = %s AND dia_semana = %s
+                """, (servicio_id, dia_semana))
+                horarios = cur.fetchall()
+
+                if not horarios:
+                    continue
+
+                # Turnos ocupados
+                cur.execute("""
+                    SELECT hora FROM turnos
+                    WHERE servicio_id = %s
+                      AND fecha = %s
+                      AND estado = 'reservado'
+                """, (servicio_id, fecha))
+
+                ocupados = {r["hora"] for r in cur.fetchall()}
+
+                total_slots = 0
+                booked_slots = 0
+
+                for h in horarios:
+                    inicio = datetime.combine(fecha, h["hora_inicio"])
+                    fin = datetime.combine(fecha, h["hora_fin"])
+
+                    while inicio + timedelta(minutes=duracion) <= fin:
+                        total_slots += 1
+                        if inicio.time() in ocupados:
+                            booked_slots += 1
+                        inicio += timedelta(minutes=duracion)
+
+                resultado.append({
+                    "date": fecha.isoformat(),
+                    "total": total_slots,
+                    "booked": booked_slots
+                })
+
+            return resultado
+
+
